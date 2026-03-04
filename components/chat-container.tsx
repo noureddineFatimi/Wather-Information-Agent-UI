@@ -13,7 +13,7 @@ interface Message {
 
 interface ConversationEntry {
   role: string
-  content: string | Array<{ text: string; type: string }>
+  content: string 
 }
 
 export function ChatContainer() {
@@ -38,7 +38,7 @@ export function ChatContainer() {
     setIsLoading(true)
 
     try {
-      const response = await fetch("/v1/api/agent", {
+      const response = await fetch("http://127.0.0.1:5000/v1/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -52,7 +52,7 @@ export function ChatContainer() {
         let errorText = "Something went wrong. Please try again."
 
         if (status === 400) {
-          errorText = "Bad request. Please check your message and try again."
+          errorText = "Bad request. Please try again."
         } else if (status === 500) {
           errorText = "Server error. The weather service is temporarily unavailable."
         } else {
@@ -68,19 +68,7 @@ export function ChatContainer() {
       }
 
       const data = await response.json()
-      const responseList: ConversationEntry[] = data.response || []
-
-      // Extract assistant text from the response
-      let assistantText = ""
-      for (const entry of responseList) {
-        if (entry.role === "assistant" && Array.isArray(entry.content)) {
-          for (const block of entry.content) {
-            if (block.type === "output_text" && block.text) {
-              assistantText += block.text
-            }
-          }
-        }
-      }
+      const assistantText: string = data.response || ""
 
       if (assistantText) {
         setMessages((prev) => [
@@ -98,7 +86,7 @@ export function ChatContainer() {
       setConversation((prev) => [
         ...prev,
         { role: "user", content: userInput },
-        ...responseList,
+        {role: "assistant", content: assistantText},
       ])
     } catch {
       setMessages((prev) => [
