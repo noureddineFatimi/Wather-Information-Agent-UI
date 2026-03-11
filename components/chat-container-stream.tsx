@@ -13,14 +13,15 @@ interface Message {
 
 interface ConversationEntry {
   role: string
-  content: string 
+  content: string
 }
 
-export function ChatContainer() {
+export function ChatContainerStream() {
   const [messages, setMessages] = useState<Message[]>([])
   const [conversation, setConversation] = useState<ConversationEntry[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -33,74 +34,92 @@ export function ChatContainer() {
   }, [messages, isLoading, scrollToBottom])
 
   const handleSend = async (userInput: string) => {
-    console.log(conversation)
     const userMessage: Message = { role: "user", content: userInput }
     setMessages((prev) => [...prev, userMessage])
     setIsLoading(true)
 
+    // Initialize abort controller for this request
+    abortControllerRef.current = new AbortController()
+
     try {
-      const response = await fetch("http://127.0.0.1:5000/v1/api/agent", {
+      const response = await fetch("http://127.0.0.1:5000/v1/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           user_input: userInput,
           conversation: conversation,
         }),
+        signal: abortControllerRef.current.signal,
       })
 
       if (!response.ok) {
-        const status = response.status
-        let errorText = "Something went wrong. Please try again."
+        const errorData = await response.json()
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+      }
 
-        if (status === 400) {
-          errorText = "Bad request. Please try again."
-        } else if (status === 500) {
-          errorText = "Server error. The weather service is temporarily unavailable."
-        } else {
-          errorText = `Error (${status}): Something unexpected happened.`
+      // Handle streaming response
+      if (!response.body) {
+        throw new Error("Response body is empty")
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let assistantMessage = ""
+
+      // Add empty assistant message placeholder
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "" },
+      ])
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+
+          if (done) break
+
+          const chunk = decoder.decode(value, { stream: true })
+          assistantMessage += chunk
+
+          // Update the last message with streamed content
+          setMessages((prev) => {
+            const updated = [...prev]
+            if (updated[updated.length - 1].role === "assistant") {
+              updated[updated.length - 1] = {
+                role: "assistant",
+                content: assistantMessage,
+              }
+            }
+            return updated
+          })
         }
-
-        setMessages((prev) => [
-          ...prev,
-          { role: "error", content: errorText },
-        ])
-        setIsLoading(false)
-        return
+      } finally {
+        reader.releaseLock()
       }
 
-      const data = await response.json()
-      const assistantText: string = data.response || ""
-
-      if (assistantText) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", content: assistantText },
-        ])
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          { role: "error", content: "Received an empty response from the assistant." },
-        ])
-      }
-
-      // Update conversation history with the full response list
+      // Update conversation history with both user and assistant messages
       setConversation((prev) => [
         ...prev,
         { role: "user", content: userInput },
-        {role: "assistant", content: assistantText},
+        { role: "assistant", content: assistantMessage },
       ])
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "error",
-          content: "Network error. Please check your connection and try again.",
-        },
-      ])
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        console.log("Request was cancelled")
+      } else {
+        const errorMessage = error instanceof Error ? error.message : "An unknown error occurred"
+        setMessages((prev) => [
+          ...prev,
+          { role: "error", content: `Error: ${errorMessage}` },
+        ])
+        console.error("Error:", error)
+      }
     } finally {
       setIsLoading(false)
+      abortControllerRef.current = null
     }
   }
+
 
   return (
     <div className="flex h-dvh flex-col bg-background">
