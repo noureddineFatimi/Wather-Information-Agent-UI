@@ -35,7 +35,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
 
   return (
     <div className="border-t border-border bg-card/80 backdrop-blur-sm p-4">
-      <div className="mx-auto flex max-w-3xl items-end gap-3">
+      <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
         <div className="relative flex-1">
           <textarea
             ref={inputRef}

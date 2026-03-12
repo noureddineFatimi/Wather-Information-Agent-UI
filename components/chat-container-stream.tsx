@@ -5,11 +5,23 @@ import { ChatMessage } from "@/components/chat-message"
 import { ChatInput } from "@/components/chat-input"
 import { TypingIndicator } from "@/components/typing-indicator"
 import { CloudSun } from "lucide-react"
-
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 interface Message {
   role: "user" | "assistant" | "error"
   content: string
 }
+
+const MODELS = [
+  { id: "qwen", label: "Qwen-3.5" },
+  { id: "gpt-oss", label: "GPT-oss" },
+  { id: "gemini", label: "Gemini-2.5-flash" }
+]
 
 interface ConversationEntry {
   role: string
@@ -17,6 +29,7 @@ interface ConversationEntry {
 }
 
 export function ChatContainerStream() {
+  const [model, setModel] = useState<string>("qwen")
   const [messages, setMessages] = useState<Message[]>([])
   const [conversation, setConversation] = useState<ConversationEntry[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -48,18 +61,39 @@ export function ChatContainerStream() {
         body: JSON.stringify({
           user_input: userInput,
           conversation: conversation,
+          model: model
         }),
         signal: abortControllerRef.current.signal,
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+        const status = response.status
+        let errorText = "Something went wrong. Please try again."
+
+        if (status === 400) {
+          errorText = "Bad request. Please try again."
+        } else if (status === 500) {
+          errorText = "Server error. The weather service is temporarily unavailable."
+        } else {
+          errorText = `Error (${status}): Something unexpected happened.`
+        }
+
+        setMessages((prev) => [
+          ...prev,
+          { role: "error", content: errorText },
+        ])
+        setIsLoading(false)
+        return
       }
 
       // Handle streaming response
       if (!response.body) {
-        throw new Error("Response body is empty")
+        setMessages((prev) => [
+          ...prev,
+          { role: "error", content: "Response is Empty" },
+        ])
+        setIsLoading(false)
+        return
       }
 
       const reader = response.body.getReader()
@@ -71,7 +105,7 @@ export function ChatContainerStream() {
         ...prev,
         { role: "assistant", content: "" },
       ])
-
+      let firstChunk = true
       try {
         while (true) {
           const { done, value } = await reader.read()
@@ -79,8 +113,19 @@ export function ChatContainerStream() {
           if (done) break
 
           const chunk = decoder.decode(value, { stream: true })
+          if (chunk.includes("[ERROR:CONNECTION_LOST]")) {
+            setMessages((prev) => [
+            ...prev,
+            { role: "error", content: "Internal nework error"},
+          ])
+          setIsLoading(false)
+          return
+          }
           assistantMessage += chunk
-
+          if (firstChunk) {
+            setIsLoading(false)
+            firstChunk = false
+          }
           // Update the last message with streamed content
           setMessages((prev) => {
             const updated = [...prev]
@@ -103,35 +148,44 @@ export function ChatContainerStream() {
         { role: "user", content: userInput },
         { role: "assistant", content: assistantMessage },
       ])
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        console.log("Request was cancelled")
-      } else {
-        const errorMessage = error instanceof Error ? error.message : "An unknown error occurred"
-        setMessages((prev) => [
+    }
+    catch {
+      setMessages((prev) => [
           ...prev,
-          { role: "error", content: `Error: ${errorMessage}` },
+          { role: "error", content: "Error during sending Request, Please try again or check your connection internet" },
         ])
-        console.error("Error:", error)
-      }
-    } finally {
+    }
+    finally {
       setIsLoading(false)
       abortControllerRef.current = null
     }
   }
 
-
   return (
     <div className="flex h-dvh flex-col bg-background">
       {/* Header */}
-      <header className="flex items-center gap-3 border-b border-border bg-card/80 backdrop-blur-sm px-6 py-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <CloudSun className="h-5 w-5" />
+      <header className="flex items-center justify-between border-b border-border bg-card/80 backdrop-blur-sm px-6 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <CloudSun className="h-5 w-5" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold text-foreground">Weather AI</h1>
+            <p className="text-xs text-muted-foreground">Ask me about weather anywhere</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-base font-semibold text-foreground">Weather AI</h1>
-          <p className="text-xs text-muted-foreground">Ask me about weather anywhere</p>
-        </div>
+        <Select value={model} onValueChange={setModel}>
+          <SelectTrigger className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {MODELS.map((model) => (
+              <SelectItem key={model.id} value={model.id}>
+                {model.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </header>
 
       {/* Messages area */}
